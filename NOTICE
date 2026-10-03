@@ -1,0 +1,14 @@
+meeting-local
+=============
+
+This package uses (unmodified, installed from PyPI / GitHub releases):
+
+  faster-whisper — https://github.com/SYSTRAN/faster-whisper — MIT
+    Whisper CT2 model weights (Systran/faster-whisper-*) — MIT (OpenAI Whisper)
+  sherpa-onnx — https://github.com/k2-fsa/sherpa-onnx — Apache-2.0
+    sherpa-onnx-pyannote-segmentation-3-0 — MIT (pyannote/segmentation-3.0, converted to ONNX by k2-fsa)
+    3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx — Apache-2.0 (3D-Speaker, ModelScope)
+  ffmpeg — LGPL/GPL (system binary, not bundled)
+  kordoc (optional, via ../kordoc-local) — MIT
+
+Files authored for this package (MIT): app.py, ui.html, goal-prompt.md, selftest.py, setup.sh, pack.sh, README.md

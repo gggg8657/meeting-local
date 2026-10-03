@@ -1,0 +1,161 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meeting local</title>
+<style>
+  :root{--bg:#fafaf8;--fg:#1f1f1f;--muted:#777;--line:#ddd;--acc:#2f6fed}
+  body{font:15px/1.65 -apple-system,"Pretendard","Apple SD Gothic Neo",system-ui,sans-serif;background:var(--bg);color:var(--fg);max-width:1200px;margin:0 auto;padding:20px 16px}
+  h1{font-size:20px;margin:0 0 4px}h1 small{font-weight:400;color:var(--muted);font-size:13px}
+  h2{font-size:16px;margin:18px 0 8px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  select,button,input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:#fff}
+  input[type=number]{width:70px}
+  button.primary{background:var(--acc);color:#fff;border-color:var(--acc);padding:6px 22px;cursor:pointer}button:disabled{opacity:.5}
+  #status,#stages{color:var(--muted);font-size:13px}#stages{min-height:1.4em;margin:6px 0}#stages b{color:var(--fg)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:8px 0}
+  .spk{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:start;border-bottom:1px dashed var(--line);padding:8px 0}
+  .spk:last-child{border:none}.spk input{width:130px}.spk .meta{font-size:12px;color:var(--muted)}
+  .snip{font-size:13px;margin:2px 0}.snip button{padding:1px 7px;font-size:12px;margin-right:6px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:14px}
+  .tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:6px 12px;cursor:pointer;color:var(--muted)}
+  .tabs button.on{color:var(--fg);border-bottom-color:var(--acc)}
+  .pane{display:none;padding:12px 0}.pane.on{display:block}
+  pre,textarea{white-space:pre-wrap;background:#f1f1ee;padding:12px;border-radius:6px;font-size:13px;line-height:1.5;overflow-x:auto;width:100%;box-sizing:border-box;border:none;font-family:inherit}
+  textarea{min-height:360px;resize:vertical}
+  .utt{padding:3px 0;font-size:14px}.utt b{color:var(--acc);margin-right:6px}.utt small{color:var(--muted);margin-right:6px}
+  .ins{border-left:3px solid var(--acc);padding:6px 12px;margin:10px 0;background:#fff}.ins h3{margin:0 0 4px;font-size:14px}.ins pre{background:none;padding:0}
+  .dl a{margin-right:14px;color:var(--acc);font-weight:600}
+  #runs{font-size:13px}#runs li{cursor:pointer;padding:3px 0;list-style:none}#runs li:hover{color:var(--acc)}
+  details{margin-top:14px}summary{cursor:pointer;color:var(--muted);font-size:13px}
+</style>
+
+<h1>meeting local <small>— 회의 녹음 → 화자 분리 전사 → 이름 지정 → 회의록·인사이트 (로컬 LLM)</small></h1>
+<div id="stages"></div>
+
+<div class="card">
+  <div class="bar">
+    <input type="file" id="file" accept=".m4a,.mp3,.wav,.mp4,.webm,.ogg,.flac,.aac,.mov">
+    <label>화자 수 <input type="number" id="nspk" min="0" max="20" value="0" title="0 = 자동"></label>
+    <label>모델 <select id="model"></select></label>
+    <button id="go" class="primary">1. 전사 + 화자 분리</button>
+    <span id="status"></span>
+  </div>
+</div>
+
+<div id="step2" hidden>
+  <h2>2. 화자 이름 지정 <small style="font-weight:400;color:var(--muted)">— ▶ 를 눌러 목소리를 확인하고 이름을 입력</small></h2>
+  <div class="card" id="speakers"></div>
+  <div class="card">
+    <div class="bar">
+      <label>제목 <input id="title" placeholder="주간 업무회의"></label>
+      <label>일시 <input id="date" placeholder="2026. 10. 4. 14:00"></label>
+      <label>장소 <input id="place" placeholder="3층 회의실"></label>
+      <button id="fin" class="primary">3. 회의록 생성</button>
+    </div>
+  </div>
+</div>
+
+<div id="res" hidden>
+  <div class="dl" id="dl"></div>
+  <div class="tabs">
+    <button data-t="min" class="on">회의록</button>
+    <button data-t="ins">인사이트</button>
+    <button data-t="tr">전사본</button>
+    <button data-t="log">로그</button>
+  </div>
+  <div id="p-min" class="pane on"><textarea id="min" readonly placeholder="회의록 (토큰 스트리밍)"></textarea></div>
+  <div id="p-ins" class="pane"><div id="ins"></div></div>
+  <div id="p-tr" class="pane"><div id="tr"></div></div>
+  <div id="p-log" class="pane"><pre id="log"></pre></div>
+</div>
+
+<details><summary>이전 실행 기록</summary><ul id="runs"></ul></details>
+<audio id="player" hidden></audio>
+
+<script>
+const $ = id => document.getElementById(id);
+const MODEL_DEFAULT = %MODEL%;
+let RUN = null;
+fetch('/api/models').then(r => r.json()).then(ms => {
+  $('model').innerHTML = ms.map(m => `<option ${m === MODEL_DEFAULT ? 'selected' : ''}>${m}</option>`).join('');
+}).catch(() => $('status').textContent = 'LLM 서버에 연결할 수 없습니다');
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button, .pane').forEach(e => e.classList.remove('on'));
+  b.classList.add('on'); $('p-' + b.dataset.t).classList.add('on');
+});
+const ts = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+
+async function sse(url, body, onEv) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', done = null;
+  while (true) {
+    const { value, done: d } = await reader.read(); if (d) break;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (!line.startsWith('data: ')) continue;
+      const ev = JSON.parse(line.slice(6));
+      if (ev.stage) { $('stages').innerHTML += `<b>${ev.stage}</b> ${ev.msg} · `; }
+      if (ev.error) throw new Error(ev.error);
+      if (ev.done) done = ev.done;
+      onEv && onEv(ev);
+    }
+  }
+  return done;
+}
+
+function showSpeakers(j) {
+  RUN = j; $('step2').hidden = false;
+  $('speakers').innerHTML = Object.entries(j.speakers).map(([k, v]) => `
+    <div class="spk"><div><b>${k}</b><div class="meta">${v.secs}초 · ${v.n}회 발화</div><input data-spk="${k}" placeholder="이름" value="${esc(v.name || '')}"></div>
+    <div>${v.samples.map(s => `<div class="snip"><button data-s="${s.start}" data-e="${s.end}">▶ ${ts(s.start)}</button>${esc(s.text)}</div>`).join('')}</div></div>`).join('');
+  $('speakers').querySelectorAll('button[data-s]').forEach(b => b.onclick = () => { $('player').src = `/api/runs/${j.run_id}/clip?s=${b.dataset.s}&e=${b.dataset.e}`; $('player').play(); });
+  showTranscript(j.utts); $('res').hidden = false; $('log').textContent = j.log || '';
+  if (j.meta) { $('title').value = j.meta.title || ''; $('date').value = j.meta.date || ''; $('place').value = j.meta.place || ''; }
+}
+function showTranscript(utts) {
+  $('tr').innerHTML = utts.map(u => `<div class="utt"><small>${ts(u.start)}</small><b>${esc(u.speaker)}</b>${esc(u.text)}</div>`).join('');
+}
+function showFinal(j) {
+  $('min').value = j.minutes; $('log').textContent = j.log || '';
+  $('ins').innerHTML = (j.insights || []).map(i => `<div class="ins"><h3>${esc(i.title)} <small style="color:var(--muted);font-weight:400">${ts(i.start)}~${ts(i.end)} · ${i.speakers.join(', ')}</small></h3><pre>${esc(i.insight)}</pre></div>`).join('');
+  showTranscript(j.utts);
+  const b = `/api/runs/${j.run_id}/`;
+  $('dl').innerHTML = `<a href="${b}minutes.md">⬇ 회의록.md</a><a href="${b}insights.json">⬇ 인사이트.json</a><a href="${b}transcript.txt">⬇ 전사본.txt</a>` + (j.hwpx ? `<a href="${b}minutes.hwpx">⬇ 회의록.hwpx</a>` : '<span style="color:var(--muted);font-size:13px">(HWPX: kordoc-local 이 옆에 있으면 생성)</span>');
+}
+
+async function loadRuns() {
+  const rs = await fetch('/api/runs').then(r => r.json());
+  $('runs').innerHTML = rs.map(r => `<li data-id="${r.run_id}">${r.ts} · ${r.file} · ${r.duration}s · 화자 ${r.n_speakers} · ${r.status}</li>`).join('') || '<li>없음</li>';
+  $('runs').querySelectorAll('li[data-id]').forEach(li => li.onclick = async () => {
+    const j = await fetch('/api/runs/' + li.dataset.id).then(r => r.json()); $('stages').textContent = '';
+    showSpeakers(j); if (j.minutes) showFinal(j);
+  });
+}
+loadRuns();
+const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = no; r.readAsDataURL(f); });
+
+$('go').onclick = async () => {
+  const f = $('file').files[0]; if (!f) { $('status').textContent = '녹음 파일을 고르세요'; return; }
+  $('go').disabled = true; $('step2').hidden = true; $('res').hidden = true; $('stages').textContent = '';
+  $('status').textContent = '전사 중 — 녹음 길이의 10~30% 시간이 걸립니다'; const t0 = Date.now();
+  try {
+    const j = await sse('/api/run', { file_name: f.name, file_b64: await b64(f), speakers: +$('nspk').value });
+    showSpeakers(j); $('status').textContent = `전사 완료 ${((Date.now() - t0) / 1000).toFixed(0)}초 · 화자 ${j.n_speakers}명`; loadRuns();
+  } catch (e) { $('status').textContent = '오류: ' + e.message; }
+  $('go').disabled = false;
+};
+$('fin').onclick = async () => {
+  if (!RUN) return;
+  const names = {}; $('speakers').querySelectorAll('input[data-spk]').forEach(i => { if (i.value.trim()) names[i.dataset.spk] = i.value.trim(); });
+  $('fin').disabled = true; $('min').value = ''; $('res').hidden = false; $('stages').textContent = '';
+  $('status').textContent = '회의록 생성 중'; const t0 = Date.now();
+  try {
+    const j = await sse(`/api/finalize/${RUN.run_id}`, { names, meta: { title: $('title').value, date: $('date').value, place: $('place').value } },
+      ev => { if (ev.reset) $('min').value = ''; if (ev.token) { $('min').value += ev.token; $('min').scrollTop = $('min').scrollHeight; } });
+    showFinal(j); $('status').textContent = `완료 ${((Date.now() - t0) / 1000).toFixed(0)}초`; loadRuns();
+  } catch (e) { $('status').textContent = '오류: ' + e.message; }
+  $('fin').disabled = false;
+};
+</script>
