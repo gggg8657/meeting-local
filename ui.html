@@ -36,7 +36,6 @@
   <div class="bar">
     <input type="file" id="file" accept=".m4a,.mp3,.wav,.mp4,.webm,.ogg,.flac,.aac,.mov">
     <label>화자 수 <input type="number" id="nspk" min="0" max="20" value="0" title="0 = 자동"></label>
-    <label>모델 <select id="model"></select></label>
     <button id="go" class="primary">1. 전사 + 화자 분리</button>
     <span id="status"></span>
   </div>
@@ -76,13 +75,6 @@
 const $ = id => document.getElementById(id);
 const MODEL_DEFAULT = %MODEL%;
 let RUN = null;
-fetch('/api/models').then(r => r.json()).then(ms => {
-  $('model').innerHTML = ms.map(m => `<option ${m === MODEL_DEFAULT ? 'selected' : ''}>${m}</option>`).join('');
-}).catch(() => $('status').textContent = 'LLM 서버에 연결할 수 없습니다');
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.tabs button, .pane').forEach(e => e.classList.remove('on'));
-  b.classList.add('on'); $('p-' + b.dataset.t).classList.add('on');
-});
 const ts = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
 
