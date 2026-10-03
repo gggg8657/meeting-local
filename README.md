@@ -35,6 +35,8 @@ venv/bin/python selftest.py                         # 모델·LLM 없이 결정�
 | `NUM_CTX` | `16384` | Ollama 컨텍스트 |
 | `PORT` | `8767` | |
 
+**STT API** (다른 도구가 음성 입력에 씀): `POST /v1/audio/transcriptions` — multipart `file` 또는 JSON `{"file": "<base64>"}` → `{"text": "..."}` (한국어, 로드된 faster-whisper 재사용).
+
 ## 파이프라인
 
 | 단계 | 도구 | LLM |

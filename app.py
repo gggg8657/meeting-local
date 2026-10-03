@@ -150,7 +150,13 @@ def clip(wav, start, end, dst):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-to", f"{end:.2f}", "-i", wav, dst], check=True)
 
 
-def transcribe(wav, log):
+_WHISPER = None  # ponytail: 프로세스당 1회 로드 (STT 엔드포인트가 매 요청 호출)
+
+
+def whisper(log):
+    global _WHISPER
+    if _WHISPER:
+        return _WHISPER
     from faster_whisper import WhisperModel
     dev = WHISPER_DEVICE
     if dev == "auto":
@@ -161,8 +167,13 @@ def transcribe(wav, log):
             dev = "cpu"
     compute = WHISPER_COMPUTE or ("float16" if dev == "cuda" else "int8")
     log.append(f"[asr] faster-whisper {WHISPER_MODEL} device={dev} compute={compute}")
-    m = WhisperModel(WHISPER_MODEL, device=dev, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
-                     local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
+    _WHISPER = WhisperModel(WHISPER_MODEL, device=dev, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
+                            local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
+    return _WHISPER
+
+
+def transcribe(wav, log):
+    m = whisper(log)
     segs, info = m.transcribe(wav, language="ko", vad_filter=True, beam_size=5, word_timestamps=True)
     out = []
     for s in segs:
@@ -443,7 +454,30 @@ class H(BaseHTTPRequestHandler):
             self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
 
     def do_POST(self):
-        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path.split("?")[0] == "/v1/audio/transcriptions":  # OpenAI 호환 STT: multipart file 또는 JSON {"file": base64}
+            try:
+                ctype = self.headers.get("Content-Type", "")
+                if ctype.startswith("multipart/form-data"):
+                    import email.parser
+                    msg = email.parser.BytesParser().parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
+                    audio = next((part.get_payload(decode=True) for part in msg.walk() if part.get_param("name", header="content-disposition") == "file"), None)
+                else:
+                    audio = base64.b64decode(json.loads(raw)["file"])
+                if not audio:
+                    raise ValueError("file 없음")
+                d = os.path.join(WS, "_stt"); os.makedirs(d, exist_ok=True)
+                src = os.path.join(d, secrets.token_hex(4)); wav = src + ".wav"
+                with open(src, "wb") as f:
+                    f.write(audio)
+                to_wav(src, wav)
+                text = " ".join(s["text"] for s in transcribe(wav, [])).strip()
+                for f in (src, wav):
+                    os.remove(f)
+                return self._send({"text": text})
+            except Exception as e:
+                return self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
+        req = json.loads(raw)
         try:
             if self.path == "/api/run":
                 name = re.sub(r"[^\w.\-가-힣 ]", "_", os.path.basename(req.get("file_name") or "upload.bin"))
