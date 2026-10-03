@@ -161,7 +161,8 @@ def transcribe(wav, log):
             dev = "cpu"
     compute = WHISPER_COMPUTE or ("float16" if dev == "cuda" else "int8")
     log.append(f"[asr] faster-whisper {WHISPER_MODEL} device={dev} compute={compute}")
-    m = WhisperModel(WHISPER_MODEL, device=dev, compute_type=compute, download_root=os.path.join(MODELS, "whisper"))
+    m = WhisperModel(WHISPER_MODEL, device=dev, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
+                     local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
     segs, info = m.transcribe(wav, language="ko", vad_filter=True, beam_size=5, word_timestamps=True)
     out = []
     for s in segs:
