@@ -102,7 +102,7 @@ function showSpeakers(j) {
   $('speakers').innerHTML = Object.entries(j.speakers).map(([k, v]) => `
     <div class="spk"><div><b>${k}</b><div class="meta">${v.secs}초 · ${v.n}회 발화</div><input data-spk="${k}" placeholder="이름" value="${esc(v.name || '')}"></div>
     <div>${v.samples.map(s => `<div class="snip"><button data-s="${s.start}" data-e="${s.end}">▶ ${ts(s.start)}</button>${esc(s.text)}</div>`).join('')}</div></div>`).join('');
-  $('speakers').querySelectorAll('button[data-s]').forEach(b => b.onclick = () => { $('player').src = `/api/runs/${j.run_id}/clip?s=${b.dataset.s}&e=${b.dataset.e}`; $('player').play(); });
+  $('speakers').querySelectorAll('button[data-s]').forEach(b => b.onclick = () => { $('player').src = `api/runs/${j.run_id}/clip?s=${b.dataset.s}&e=${b.dataset.e}`; $('player').play(); });
   showTranscript(j.utts); $('res').hidden = false; $('log').textContent = j.log || '';
   if (j.meta) { $('title').value = j.meta.title || ''; $('date').value = j.meta.date || ''; $('place').value = j.meta.place || ''; }
 }
@@ -113,15 +113,15 @@ function showFinal(j) {
   $('min').value = j.minutes; $('log').textContent = j.log || '';
   $('ins').innerHTML = (j.insights || []).map(i => `<div class="ins"><h3>${esc(i.title)} <small style="color:var(--muted);font-weight:400">${ts(i.start)}~${ts(i.end)} · ${i.speakers.join(', ')}</small></h3><pre>${esc(i.insight)}</pre></div>`).join('');
   showTranscript(j.utts);
-  const b = `/api/runs/${j.run_id}/`;
+  const b = `api/runs/${j.run_id}/`;
   $('dl').innerHTML = `<a href="${b}minutes.md">⬇ 회의록.md</a><a href="${b}insights.json">⬇ 인사이트.json</a><a href="${b}transcript.txt">⬇ 전사본.txt</a>` + (j.hwpx ? `<a href="${b}minutes.hwpx">⬇ 회의록.hwpx</a>` : '<span style="color:var(--muted);font-size:13px">(HWPX: kordoc-local 이 옆에 있으면 생성)</span>');
 }
 
 async function loadRuns() {
-  const rs = await fetch('/api/runs').then(r => r.json());
+  const rs = await fetch('api/runs').then(r => r.json());
   $('runs').innerHTML = rs.map(r => `<li data-id="${r.run_id}">${r.ts} · ${r.file} · ${r.duration}s · 화자 ${r.n_speakers} · ${r.status}</li>`).join('') || '<li>없음</li>';
   $('runs').querySelectorAll('li[data-id]').forEach(li => li.onclick = async () => {
-    const j = await fetch('/api/runs/' + li.dataset.id).then(r => r.json()); $('stages').textContent = '';
+    const j = await fetch('api/runs/' + li.dataset.id).then(r => r.json()); $('stages').textContent = '';
     showSpeakers(j); if (j.minutes) showFinal(j);
   });
 }
@@ -133,7 +133,7 @@ $('go').onclick = async () => {
   $('go').disabled = true; $('step2').hidden = true; $('res').hidden = true; $('stages').textContent = '';
   $('status').textContent = '전사 중 — 녹음 길이의 10~30% 시간이 걸립니다'; const t0 = Date.now();
   try {
-    const j = await sse('/api/run', { file_name: f.name, file_b64: await b64(f), speakers: +$('nspk').value });
+    const j = await sse('api/run', { file_name: f.name, file_b64: await b64(f), speakers: +$('nspk').value });
     showSpeakers(j); $('status').textContent = `전사 완료 ${((Date.now() - t0) / 1000).toFixed(0)}초 · 화자 ${j.n_speakers}명`; loadRuns();
   } catch (e) { $('status').textContent = '오류: ' + e.message; }
   $('go').disabled = false;
@@ -144,7 +144,7 @@ $('fin').onclick = async () => {
   $('fin').disabled = true; $('min').value = ''; $('res').hidden = false; $('stages').textContent = '';
   $('status').textContent = '회의록 생성 중'; const t0 = Date.now();
   try {
-    const j = await sse(`/api/finalize/${RUN.run_id}`, { names, meta: { title: $('title').value, date: $('date').value, place: $('place').value } },
+    const j = await sse(`api/finalize/${RUN.run_id}`, { names, meta: { title: $('title').value, date: $('date').value, place: $('place').value } },
       ev => { if (ev.reset) $('min').value = ''; if (ev.token) { $('min').value += ev.token; $('min').scrollTop = $('min').scrollHeight; } });
     showFinal(j); $('status').textContent = `완료 ${((Date.now() - t0) / 1000).toFixed(0)}초`; loadRuns();
   } catch (e) { $('status').textContent = '오류: ' + e.message; }
