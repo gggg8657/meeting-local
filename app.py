@@ -153,10 +153,23 @@ def clip(wav, start, end, dst):
 _WHISPER = None  # ponytail: 프로세스당 1회 로드 (STT 엔드포인트가 매 요청 호출)
 
 
+def _cuda_libs():
+    """pip 으로 넣은 CUDA 12 cuBLAS·cuDNN(nvidia-*-cu12)을 미리 올린다 — ctranslate2 는 시스템 라이브러리 경로에서만 찾는다"""
+    import ctypes, glob, site
+    for sp in site.getsitepackages():
+        for pat in ("nvidia/cublas/lib/libcublasLt.so.*", "nvidia/cublas/lib/libcublas.so.*", "nvidia/cudnn/lib/libcudnn*.so.*"):
+            for f in sorted(glob.glob(os.path.join(sp, pat))):
+                try:
+                    ctypes.CDLL(f, mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
+
+
 def whisper(log):
     global _WHISPER
     if _WHISPER:
         return _WHISPER
+    _cuda_libs()
     from faster_whisper import WhisperModel
     dev = WHISPER_DEVICE
     if dev == "auto":
@@ -408,6 +421,42 @@ def list_runs():
 HTML = read(os.path.join(ROOT, "ui.html")) if os.path.exists(os.path.join(ROOT, "ui.html")) else "ui.html 없음"
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
+
+# ── 윤문하기: kordoc-local 의 글 윤문 API (숫자·날짜·고유 표기가 바뀐 조각은 원문 유지) ─────────
+KORDOC_URL = os.environ.get("KORDOC_URL", "http://localhost:8766").rstrip("/")
+
+
+def polish_remote(text, strength="standard"):
+    req = urllib.request.Request(KORDOC_URL + "/api/polish_text", json.dumps({"text": text, "strength": strength}).encode(),
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(json.loads(e.read() or b"{}").get("error") or f"kordoc HTTP {e.code}")
+
+
+def polish_run(run_id, strength):
+    """저장된 회의록(minutes.md)을 윤문해 덮어쓰고(처음 원문은 minutes_orig.md 로 보관) HWPX 를 다시 만든다"""
+    if not re.fullmatch(RUN_RE, run_id or ""): raise ValueError("잘못된 실행 ID")
+    d = os.path.join(WS, run_id); md = os.path.join(d, "minutes.md")
+    if not os.path.exists(md): raise ValueError("회의록이 아직 없습니다")
+    r = polish_remote(read(md), strength)
+    if not os.path.exists(os.path.join(d, "minutes_orig.md")): write(os.path.join(d, "minutes_orig.md"), read(md))
+    write(md, r["output"])
+    log = []
+    r["hwpx"] = hwpx(md, os.path.join(d, "minutes.hwpx"), log) if os.path.exists(os.path.join(d, "minutes.hwpx")) or os.path.exists(KORDOC) else None
+    r["log"] = (r.get("log") or "") + "\n".join(log)
+    return r
+
+
+def polish_ok():
+    try:
+        urllib.request.urlopen(KORDOC_URL + "/api/models", timeout=2)
+        return True
+    except Exception:
+        return False
+
 # ── 저작권 표기 (LICENSE·NOTICE 참고) ─────────────────────────────────────
 _SIG = __import__("base64").b64decode("wqkgMjAyNiDquYDrj5nso7wgwrcgZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20=").decode()
 _SIG_A = __import__("base64").b64decode("RG9uZ0p1IEtpbSA8ZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20+").decode()
@@ -428,7 +477,7 @@ def signed(html):
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
-        if "/api/run" in (a[0] if a else "") or "/api/finalize" in (a[0] if a else ""):
+        if "/api/run" in (str(a[0]) if a else "") or "/api/finalize" in (str(a[0]) if a else ""):
             super().log_message(fmt, *a)
 
     def _send(self, body, ctype="application/json", code=200, name=None):
@@ -446,6 +495,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            if self.path == "/api/polish_ok":
+                return self._send({"ok": polish_ok()})
             if self.path == "/api/models":
                 return self._send(models())
             if self.path == "/api/runs":
@@ -472,6 +523,14 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path == "/api/polish":
+            try:
+                req = json.loads(raw or b"{}")
+                return self._send(polish_run(req.get("run_id"), req.get("strength") or "standard"))
+            except ValueError as e:
+                return self._send({"error": str(e)}, code=400)
+            except Exception as e:
+                return self._send({"error": f"{type(e).__name__}: {e}"}, code=502)
         if self.path.split("?")[0] == "/v1/audio/transcriptions":  # OpenAI 호환 STT: multipart file 또는 JSON {"file": base64}
             try:
                 ctype = self.headers.get("Content-Type", "")

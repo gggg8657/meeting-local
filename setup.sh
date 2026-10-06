@@ -29,6 +29,9 @@ PY=""; for c in python3.11 python3.12 python3; do has "$c" && "$c" -c 'import sy
 if [ ! -x venv/bin/python ]; then if has uv; then uv venv --python "$(command -v $PY)" venv -q; else "$PY" -m venv venv; fi; fi
 if [ -d wheels ]; then venv/bin/pip install -q --no-index --find-links wheels -r requirements.txt   # 폐쇄망 번들
 elif has uv; then VIRTUAL_ENV="$PWD/venv" uv pip install -q -r requirements.txt; else venv/bin/pip install -q -r requirements.txt; fi
+if command -v nvidia-smi >/dev/null 2>&1 && [ ! -d wheels ] && ! venv/bin/python -c "import nvidia.cublas, nvidia.cudnn" 2>/dev/null; then  # GPU: ctranslate2 가 쓸 CUDA 12 cuBLAS·cuDNN
+  if has uv; then VIRTUAL_ENV="$PWD/venv" uv pip install -q nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"; else venv/bin/pip install -q nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"; fi
+fi
 ok "$(venv/bin/python --version) + faster-whisper/sherpa-onnx"
 
 step "모델"
