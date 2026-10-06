@@ -68,3 +68,6 @@ GPU 전사는 CUDA 12 + cuDNN 9 (CTranslate2). 없으면 `WHISPER_DEVICE=cpu`.
 - 화자 분리 정확도는 마이크 하나로 녹음한 회의에서 떨어진다. 화자 수를 알면 UI에서 지정하는 편이 낫다.
 - 전사본의 이름·숫자 오인식은 LLM이 문맥으로 고치지만 지어내지는 않도록 프롬프트에 묶어 뒀다(`(확인 필요)` 표기).
 - 1시간 녹음 기준 CPU medium 전사 ≈ 10~20분, GPU large-v3 ≈ 2~3분.
+
+### ✍ 윤문하기
+회의록 아래(저장된 minutes.md 를 윤문해 덮어쓰고 원문은 minutes_orig.md, HWPX 도 다시 생성)에 "윤문하기" 막대(가볍게·보통·적극). kordoc-local 의 글 윤문 API(`KORDOC_URL`, 기본 `http://localhost:8766`)를 부르며, kordoc 이 안 떠 있으면 막대가 숨는다. 숫자·날짜·고유 표기가 바뀐 곳은 원문 유지, "바뀐 곳 보기"로 어절 단위 비교.

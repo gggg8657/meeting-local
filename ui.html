@@ -110,7 +110,7 @@ function showTranscript(utts) {
   $('tr').innerHTML = utts.map(u => `<div class="utt"><small>${ts(u.start)}</small><b>${esc(u.speaker)}</b>${esc(u.text)}</div>`).join('');
 }
 function showFinal(j) {
-  $('min').value = j.minutes; $('log').textContent = j.log || '';
+  window.MIN_RUN = j.run_id; $('min').value = j.minutes; $('log').textContent = j.log || '';
   $('ins').innerHTML = (j.insights || []).map(i => `<div class="ins"><h3>${esc(i.title)} <small style="color:var(--muted);font-weight:400">${ts(i.start)}~${ts(i.end)} · ${i.speakers.join(', ')}</small></h3><pre>${esc(i.insight)}</pre></div>`).join('');
   showTranscript(j.utts);
   const b = `api/runs/${j.run_id}/`;
@@ -150,4 +150,44 @@ $('fin').onclick = async () => {
   } catch (e) { $('status').textContent = '오류: ' + e.message; }
   $('fin').disabled = false;
 };
+
+// ── ✍ 윤문하기: kordoc-local 의 글 윤문(숫자·날짜·고유 표기가 바뀐 조각은 원문 유지). kordoc 이 안 떠 있으면 숨김 ──
+const _pe = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function _pdiff(a, b, side) {  // 어절 단위 LCS — side 0: 원문(지운 곳), 1: 윤문(넣은 곳)
+  const x = a.split(/(\s+)/), y = b.split(/(\s+)/), L = Array.from({ length: x.length + 1 }, () => new Array(y.length + 1).fill(0));
+  for (let i = x.length - 1; i >= 0; i--) for (let k = y.length - 1; k >= 0; k--) L[i][k] = x[i] === y[k] ? L[i + 1][k + 1] + 1 : Math.max(L[i + 1][k], L[i][k + 1]);
+  let i = 0, k = 0, o = '';
+  while (i < x.length || k < y.length) {
+    if (i < x.length && k < y.length && x[i] === y[k]) { o += _pe(x[i]); i++; k++; }
+    else if (k < y.length && (i >= x.length || L[i][k + 1] >= L[i + 1][k])) { if (side) o += `<ins style="background:#dff5e1;text-decoration:none">${_pe(y[k])}</ins>`; k++; }
+    else { if (!side) o += `<del style="background:#fde2e2">${_pe(x[i])}</del>`; i++; }
+  }
+  return o;
+}
+function polishBar(mount, o) {  // o.get() → 글, o.set(글), o.run(강도, 글) → 결과(선택: 기본은 api/polish)
+  const box = document.createElement('div'); box.hidden = true;
+  box.style.cssText = 'margin:10px 0;padding:8px 10px;border:1px solid #d6e2ff;background:#f1f5ff;border-radius:8px;font-size:14px;color:#1f1f1f';
+  box.innerHTML = '<b>✍ 윤문하기</b> <select class="pst" style="font:inherit;padding:3px 6px"><option value="light">가볍게 (맞춤법·비문만)</option><option value="standard" selected>보통</option><option value="strong">적극 (간결하게)</option></select> '
+    + '<button class="pgo" style="font:inherit;padding:3px 12px">윤문하기</button> <span class="pmsg" style="color:#666;font-size:13px"></span><div class="pchg"></div>';
+  mount.after(box);
+  fetch('api/polish_ok').then(r => r.json()).then(j => box.hidden = !j.ok).catch(() => {});
+  const msg = t => box.querySelector('.pmsg').textContent = t, btn = box.querySelector('.pgo');
+  btn.onclick = async () => {
+    const text = o.get(); if (!text || !text.trim()) { msg('윤문할 글이 없어요'); return; }
+    btn.disabled = true; msg('윤문 중 — 글 길이에 따라 수십 초'); box.querySelector('.pchg').innerHTML = '';
+    try {
+      const st = box.querySelector('.pst').value;
+      const j = o.run ? await o.run(st, text) : await fetch('api/polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, strength: st }) }).then(r => r.json());
+      if (j.error) throw new Error(j.error);
+      o.set(j.output);
+      msg(`${j.units}조각 중 ${j.changes.length}곳 윤문` + (j.rejected.length ? ` · ${j.rejected.length}곳 원문 유지(숫자·고유 표기 보호)` : '') + (j.changes.length ? '' : ' — 고칠 곳 없음'));
+      if (j.changes.length) box.querySelector('.pchg').innerHTML = '<details style="margin-top:6px"><summary style="cursor:pointer;color:#555">바뀐 곳 보기</summary><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        + j.changes.map(c => `<tr><td style="border-bottom:1px solid #ddd;padding:4px;vertical-align:top">${_pdiff(c.before, c.after, 0)}</td><td style="border-bottom:1px solid #ddd;padding:4px;vertical-align:top">${_pdiff(c.before, c.after, 1)}</td></tr>`).join('') + '</table></details>';
+    } catch (e) { msg('오류: ' + e.message); }
+    btn.disabled = false;
+  };
+  return box;
+}
+polishBar($('min'), { get: () => $('min').value, set: t => $('min').value = t,
+  run: (strength) => fetch('api/polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: window.MIN_RUN, strength }) }).then(r => r.json()) });
 </script>
