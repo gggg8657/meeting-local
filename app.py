@@ -408,6 +408,23 @@ def list_runs():
 HTML = read(os.path.join(ROOT, "ui.html")) if os.path.exists(os.path.join(ROOT, "ui.html")) else "ui.html 없음"
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
+# ── 저작권 표기 (LICENSE·NOTICE 참고) ─────────────────────────────────────
+_SIG = __import__("base64").b64decode("wqkgMjAyNiDquYDrj5nso7wgwrcgZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20=").decode()
+_SIG_A = __import__("base64").b64decode("RG9uZ0p1IEtpbSA8ZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20+").decode()
+
+
+def signed(html):
+    """화면에 저작권 표기를 붙인다. ui.html 에서 지워져도 서버가 내보낼 때 다시 붙는다."""
+    name, mail = _SIG.split(" · ")
+    if 'name="author"' not in html:
+        meta = f'<meta name="author" content="{name[7:]} <{mail}>">'
+        html = html.replace("<head>", "<head>" + meta, 1) if "<head>" in html else meta + html
+    if "data-sig" not in html:
+        tag = (f'<!-- {_SIG} --><div data-sig title="{mail}" style="text-align:center;font-size:11px;color:#9aa0a6;'
+               f'opacity:.55;margin:28px 0 8px">{name}</div>')
+        html = html.replace("</body>", tag + "</body>", 1) if "</body>" in html else html + tag
+    return html
+
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
@@ -416,7 +433,7 @@ class H(BaseHTTPRequestHandler):
 
     def _send(self, body, ctype="application/json", code=200, name=None):
         b = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b)))
+        self.send_response(code); self.send_header("X-Author", _SIG_A); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b)))
         if name:
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{urllib.request.quote(name)}")
         self.end_headers(); self.wfile.write(b)
@@ -447,7 +464,7 @@ class H(BaseHTTPRequestHandler):
             if m:
                 with open(os.path.join(WS, m.group(1), m.group(2)), "rb") as f:
                     return self._send(f.read(), "application/octet-stream", name=f"{m.group(1)}_{m.group(2)}")
-            self._send(HTML.replace("%MODEL%", json.dumps(MODEL)).encode(), "text/html; charset=utf-8")
+            self._send(signed(HTML.replace("%MODEL%", json.dumps(MODEL))).encode(), "text/html; charset=utf-8")
         except FileNotFoundError:
             self._send({"error": "없음"}, code=404)
         except Exception as e:
@@ -520,5 +537,5 @@ if __name__ == "__main__":
             print(f"[{ts(i['start'])}] {i['title']}: {i['insight'][:200]}", file=sys.stderr)
         print(f"\n[run] _workspace/{r['run_id']}  hwpx={r['hwpx']}", file=sys.stderr)
         sys.exit(0)
-    print(f"meeting local → http://localhost:{PORT}  (llm={LLM_API} {LLM_BASE} {MODEL}, whisper={WHISPER_MODEL})")
+    print(f"meeting local → http://localhost:{PORT}  (llm={LLM_API} {LLM_BASE} {MODEL}, whisper={WHISPER_MODEL})  {_SIG}")
     ThreadingHTTPServer(("", PORT), H).serve_forever()
