@@ -71,3 +71,13 @@ GPU 전사는 CUDA 12 + cuDNN 9 (CTranslate2). 없으면 `WHISPER_DEVICE=cpu`.
 
 ### ✍ 윤문하기
 회의록 아래(저장된 minutes.md 를 윤문해 덮어쓰고 원문은 minutes_orig.md, HWPX 도 다시 생성)에 "윤문하기" 막대(가볍게·보통·적극). kordoc-local 의 글 윤문 API(`KORDOC_URL`, 기본 `http://localhost:8766`)를 부르며, kordoc 이 안 떠 있으면 막대가 숨는다. 숫자·날짜·고유 표기가 바뀐 곳은 원문 유지, "바뀐 곳 보기"로 어절 단위 비교.
+
+## 출처·감사 (Credits)
+
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT) + Whisper CT2 가중치 (MIT, [OpenAI Whisper](https://github.com/openai/whisper))
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) — 화자 분리: pyannote/segmentation-3.0 ONNX (MIT), 3D-Speaker CAM++ (Apache-2.0)
+- ffmpeg (LGPL/GPL, 시스템 프로그램), 선택: [kordoc](https://github.com/chrisryugj/kordoc) (MIT, chrisryugj)
+- **LLM 실행** — OpenAI 호환 API 로 호출합니다(모델 가중치는 동봉하지 않음). 기본 배포는 [Ollama](https://github.com/ollama/ollama) (MIT) 위의 Google [Gemma](https://ai.google.dev/gemma) `gemma4:31b` — 모델 이용 조건은 Gemma 배포처 참고.
+- 이 도구는 [agent-page-portal](https://github.com/gggg8657/agent-page-portal) 에 연결해 쓰도록 만들었습니다(단독 실행도 됨).
+
+저작권 표기·전체 목록은 `NOTICE` 를 보세요.

@@ -13,5 +13,8 @@ This package uses (unmodified, installed from PyPI / GitHub releases):
 
 Files authored for this package (MIT): app.py, ui.html, goal-prompt.md, selftest.py, setup.sh, pack.sh, README.md
 
-This package: Copyright (c) 2026 김동주 <dongjukim.dev@gmail.com>
+LLM (not bundled): called via an OpenAI-compatible API; default deployment is Ollama (https://github.com/ollama/ollama, MIT)
+  serving Google Gemma (gemma4:31b, https://ai.google.dev/gemma — see Gemma's terms of use).
+
+This package: Copyright (c) 2026 gggg8657 <dongjukim.dev@gmail.com>
 화면 하단·메타데이터의 저작자 표기는 지우거나 바꾸지 마세요.
