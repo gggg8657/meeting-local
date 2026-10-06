@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from gpu_pick import Lazy, label, pick, torch_device
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
 MODELS = os.environ.get("MODELS_DIR", os.path.join(ROOT, "models"))
@@ -150,9 +152,6 @@ def clip(wav, start, end, dst):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-to", f"{end:.2f}", "-i", wav, dst], check=True)
 
 
-_WHISPER = None  # ponytail: 프로세스당 1회 로드 (STT 엔드포인트가 매 요청 호출)
-
-
 def _cuda_libs():
     """pip 으로 넣은 CUDA 12 cuBLAS·cuDNN(nvidia-*-cu12)을 미리 올린다 — ctranslate2 는 시스템 라이브러리 경로에서만 찾는다"""
     import ctypes, glob, site
@@ -165,10 +164,12 @@ def _cuda_libs():
                     pass
 
 
-def whisper(log):
-    global _WHISPER
-    if _WHISPER:
-        return _WHISPER
+WHISPER_WHERE = "아직 안 올림"
+
+
+def _load_whisper():
+    """GPU 는 고정하지 않는다 — 올릴 때마다 여유 메모리가 가장 큰 GPU 1장(없으면 CPU)"""
+    global WHISPER_WHERE
     _cuda_libs()
     from faster_whisper import WhisperModel
     dev = WHISPER_DEVICE
@@ -178,20 +179,32 @@ def whisper(log):
             dev = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
         except Exception:
             dev = "cpu"
+    idx = 0
+    if dev == "cuda":
+        g = pick(6000)                      # large-v3 float16 ≈ 3~5GB
+        if g:
+            idx = int(torch_device(g).split(":")[1]); WHISPER_WHERE = label(g)
+        else:
+            dev, WHISPER_WHERE = "cpu", label(None)
+    else:
+        WHISPER_WHERE = dev
     compute = WHISPER_COMPUTE or ("float16" if dev == "cuda" else "int8")
-    log.append(f"[asr] faster-whisper {WHISPER_MODEL} device={dev} compute={compute}")
-    _WHISPER = WhisperModel(WHISPER_MODEL, device=dev, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
-                            local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
-    return _WHISPER
+    print(f"[asr] faster-whisper {WHISPER_MODEL} {WHISPER_WHERE} 에서 로드 compute={compute}", flush=True)
+    return WhisperModel(WHISPER_MODEL, device=dev, device_index=idx, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
+                        local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
+
+
+_WHISPER = Lazy(_load_whisper, "faster-whisper", log=lambda s: print(s, flush=True))  # 처음 쓸 때 올리고, 오래 안 쓰면 내림(GPU_IDLE_UNLOAD_S)
 
 
 def transcribe(wav, log):
-    m = whisper(log)
-    segs, info = m.transcribe(wav, language="ko", vad_filter=True, beam_size=5, word_timestamps=True)
-    out = []
-    for s in segs:
-        words = [{"s": round(w.start, 2), "e": round(w.end, 2), "w": w.word} for w in (s.words or [])]
-        out.append({"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip(), "words": words})
+    with _WHISPER.use() as m:
+        log.append(f"[asr] faster-whisper {WHISPER_MODEL} — {WHISPER_WHERE}")
+        segs, info = m.transcribe(wav, language="ko", vad_filter=True, beam_size=5, word_timestamps=True)
+        out = []
+        for s in segs:  # segs 는 생성기 — 실제 계산이 여기서 돌므로 use() 안에서 다 꺼낸다
+            words = [{"s": round(w.start, 2), "e": round(w.end, 2), "w": w.word} for w in (s.words or [])]
+            out.append({"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip(), "words": words})
     log.append(f"[asr] {len(out)} segments, lang={info.language} p={info.language_probability:.2f}")
     return out
 
