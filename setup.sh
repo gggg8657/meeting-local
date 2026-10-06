@@ -58,7 +58,7 @@ if [ "$LLM_API" = ollama ]; then
   curl -fsS "$LLM_BASE_URL/api/tags" | grep -q "\"name\":\"$MODEL\"" || MODEL=$(curl -fsS "$LLM_BASE_URL/api/tags" | venv/bin/python -c 'import json,sys;print(json.load(sys.stdin)["models"][0]["name"])')
 else MODEL=$(curl -fsS "$LLM_BASE_URL/models" | venv/bin/python -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])'); fi
 
-step "자가검증"; venv/bin/python selftest.py >/dev/null || die "selftest 실패"; ok "병합·이름치환·분할·회의록 조립"
+step "자가검증"; env -u WORKSPACE venv/bin/python selftest.py >/dev/null || die "selftest 실패"; ok "병합·이름치환·분할·회의록 조립"
 step "웹 서버"
 [ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null || true
 LLM_API=$LLM_API LLM_BASE_URL=$LLM_BASE_URL LLM_MODEL=$MODEL PORT=$PORT nohup venv/bin/python app.py > server.log 2>&1 & echo $! > .server.pid
