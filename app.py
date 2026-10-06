@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from gpu_pick import Lazy, label, pick, torch_device
+from gpu_pick import Lazy, label, pick, release, torch_device
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
@@ -179,7 +179,7 @@ def _load_whisper():
             dev = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
         except Exception:
             dev = "cpu"
-    idx = 0
+    idx, g = 0, None
     if dev == "cuda":
         g = pick(6000)                      # large-v3 float16 ≈ 3~5GB
         if g:
@@ -190,8 +190,11 @@ def _load_whisper():
         WHISPER_WHERE = dev
     compute = WHISPER_COMPUTE or ("float16" if dev == "cuda" else "int8")
     print(f"[asr] faster-whisper {WHISPER_MODEL} {WHISPER_WHERE} 에서 로드 compute={compute}", flush=True)
-    return WhisperModel(WHISPER_MODEL, device=dev, device_index=idx, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
-                        local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
+    try:
+        return WhisperModel(WHISPER_MODEL, device=dev, device_index=idx, compute_type=compute, download_root=os.path.join(MODELS, "whisper"),
+                            local_files_only=bool(os.environ.get("HF_HUB_OFFLINE")))  # 폐쇄망: HF 핑 없이 로컬 캐시만
+    finally:
+        release(g)  # 다 올렸으니 예약 해제
 
 
 _WHISPER = Lazy(_load_whisper, "faster-whisper", log=lambda s: print(s, flush=True))  # 처음 쓸 때 올리고, 오래 안 쓰면 내림(GPU_IDLE_UNLOAD_S)
