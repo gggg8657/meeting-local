@@ -11,7 +11,7 @@ pip download -q -r requirements.txt -d "$STAGE/wheels" --platform "$PLAT" --pyth
 cp -r models/sherpa-onnx-pyannote-segmentation-3-0 models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx "$STAGE/models/"
 venv/bin/python -c "from faster_whisper.utils import download_model; download_model('$WHISPER_MODEL', cache_dir='$STAGE/models/whisper')"
 # 3) 앱
-cp app.py ui.html goal-prompt.md selftest.py setup.sh requirements.txt README.md NOTICE LICENSE "$STAGE/"
+cp app.py gpu_pick.py ui.html goal-prompt.md selftest.py setup.sh requirements.txt README.md NOTICE LICENSE "$STAGE/"
 cat > "$STAGE/INSTALL.md" <<INS
 # 폐쇄망 설치 (meeting-local)
 tar -xzf meeting-local-linux-x64.tar.gz && cd meeting-local-linux-x64

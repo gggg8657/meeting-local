@@ -29,7 +29,8 @@ venv/bin/python selftest.py                         # 모델·LLM 없이 결정�
 | `LLM_MODEL` | `qwen3:8b` | UI에서 변경 가능 |
 | `LLM_API_KEY` | | OpenAI 호환 서버 키 |
 | `WHISPER_MODEL` | `large-v3` | `tiny/base/small/medium/large-v3` (CPU면 medium 이하 권장) |
-| `WHISPER_DEVICE` | `auto` | `cuda` / `cpu` |
+| `WHISPER_DEVICE` | `auto` | `cuda` / `cpu` — `cuda` 면 처음 받아쓸 때 여유 메모리가 가장 큰 GPU 를 고름(`gpu_pick.py`) |
+| `GPU_POOL` / `GPU_IDLE_UNLOAD_S` | (전부) / `600` | GPU 후보 제한 / 이 초 동안 안 쓰면 Whisper 를 내려 VRAM 반환(다음에 다시 고름, 0 이면 안 내림) |
 | `DIAR_THRESHOLD` | `0.5` | 화자 클러스터링 민감도 (낮을수록 화자 수 ↑) |
 | `CHUNK_SEC` | `600` | LLM 주제 분할 실패 시 인사이트 창(초) |
 | `NUM_CTX` | `16384` | Ollama 컨텍스트 |
