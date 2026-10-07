@@ -36,7 +36,7 @@
 
 ```text
 길이 140.0초 · 화자 3명
-_workspace/2026-10-06-c359/
+WORKSPACE/2026-10-06-c359/
   minutes.md · minutes.hwpx · insights.json · transcript.json · transcript.txt · speakers.json
 액션아이템 3개: 보안 점검 요청서 제출 · 서버 증설 견적 보고 · 팀별 발표 자료 준비
 ```
