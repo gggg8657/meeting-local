@@ -1,6 +1,11 @@
 meeting-local
 =============
 
+이 저장소의 원저작물(코드·UI·프롬프트·문서·도구 설계)은 DongJu Kim(gggg8657)이 작성했다.
+제3자 구성요소는 각자의 라이선스를 따르며 THIRD_PARTY_NOTICES.md 에 적었다.
+제3자 구성요소의 권리는 이 저장소의 라이선스로 바뀌지 않는다.
+연구·내부 시험용 프로토타입이며 배포·상업 서비스용이 아니다.
+
 This package uses (unmodified, installed from PyPI / GitHub releases):
 
   faster-whisper — https://github.com/SYSTRAN/faster-whisper — MIT
@@ -9,12 +14,17 @@ This package uses (unmodified, installed from PyPI / GitHub releases):
     sherpa-onnx-pyannote-segmentation-3-0 — MIT (pyannote/segmentation-3.0, converted to ONNX by k2-fsa)
     3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx — Apache-2.0 (3D-Speaker, ModelScope)
   ffmpeg — LGPL/GPL (system binary, not bundled)
+  PyAV (faster-whisper dependency) — BSD-3-Clause; its PyPI wheel ships FFmpeg (LGPL-3.0+) and libx264/libx265 (GPL-2.0+) shared libraries.
+  nvidia-cublas-cu12 / nvidia-cudnn-cu12 — NVIDIA proprietary, installed by setup.sh only when a GPU is present.
+    Neither is in this repository; pack.sh bundles wheels — see https://github.com/gggg8657/meeting-local/issues/1 before handing a bundle out.
   kordoc (optional, via ../kordoc-local) — MIT
 
 Files authored for this package (MIT): app.py, ui.html, goal-prompt.md, selftest.py, setup.sh, pack.sh, README.md
 
 LLM (not bundled): called via an OpenAI-compatible API; default deployment is Ollama (https://github.com/ollama/ollama, MIT)
-  serving Google Gemma (gemma4:31b, https://ai.google.dev/gemma — see Gemma's terms of use).
+  serving Google Gemma 4 (gemma4:31b, Apache-2.0, https://huggingface.co/google/gemma-4-31B-it);
+  setup.sh pulls Qwen3 (qwen3:8b, Apache-2.0) when Ollama has no model.
 
-This package: Copyright (c) 2026 gggg8657 <dongjukim.dev@gmail.com>
+This package: Copyright (c) 2026 DongJu Kim (gggg8657)
+제3자 구성요소 전체 표·상업 이용 확인 항목: THIRD_PARTY_NOTICES.md
 화면 하단·메타데이터의 저작자 표기는 지우거나 바꾸지 마세요.

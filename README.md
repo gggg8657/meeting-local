@@ -2,6 +2,8 @@
 
 > 녹음을 전사하고 화자를 나눕니다. 화자 이름과 회의 정보를 확인한 뒤 주제별 인사이트와 회의록을 만듭니다. kordoc-local 이 옆에 있으면 한컴에서 열리는 HWPX 도 생성합니다.
 
+> ⚠️ 연구·내부 시험용 프로토타입입니다(배포·상업 서비스용 아님). 제3자 구성요소의 라이선스는 THIRD_PARTY_NOTICES.md 를 확인하세요.
+
 ![회의록 생성 화면 — 번호는 아래 사용 방법과 대응](docs/img/ui.png)
 
 ## 무엇을 하나
@@ -120,13 +122,18 @@ GPU 전사는 CUDA 12 + cuDNN 9 (CTranslate2). 없으면 `WHISPER_DEVICE=cpu`.
 ## 출처·감사 (Credits)
 
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT) + Whisper CT2 가중치 (MIT, [OpenAI Whisper](https://github.com/openai/whisper))
-- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) — 화자 분리: pyannote/segmentation-3.0 ONNX (MIT), 3D-Speaker CAM++ (Apache-2.0)
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) — 화자 분리: pyannote/segmentation-3.0 ONNX (MIT, k2-fsa 변환본 — HF 게이트 동의 불필요), 3D-Speaker CAM++ (Apache-2.0)
+- PyAV (faster-whisper 의존, BSD-3 — 휠에 FFmpeg LGPL-3.0+·x264/x265 GPL-2.0+ 동봉), GPU 일 때 NVIDIA cuBLAS/cuDNN (독점) — 저장소에 동봉하지 않음. `pack.sh` 번들을 외부에 넘기기 전 확인 ([#1](https://github.com/gggg8657/meeting-local/issues/1))
 - ffmpeg (LGPL/GPL, 시스템 프로그램), 선택: [kordoc](https://github.com/chrisryugj/kordoc) (MIT, chrisryugj)
-- **LLM 실행** — Ollama API 또는 OpenAI 호환 API 로 호출합니다(모델 가중치는 동봉하지 않음). 기본 배포는 [Ollama](https://github.com/ollama/ollama) (MIT) 위의 Google [Gemma](https://ai.google.dev/gemma) `gemma4:31b` — 모델 이용 조건은 Gemma 배포처 참고.
+- **LLM 실행** — Ollama API 또는 OpenAI 호환 API 로 호출합니다(모델 가중치는 동봉하지 않음). 기본 배포는 [Ollama](https://github.com/ollama/ollama) (MIT) 위의 Google [Gemma 4](https://huggingface.co/google/gemma-4-31B-it) `gemma4:31b` (Apache-2.0), `setup.sh` 기본 `qwen3:8b` (Apache-2.0).
 - 이 도구는 [agent-page-portal](https://github.com/gggg8657/agent-page-portal) 에 연결해 쓰도록 만들었습니다(단독 실행도 됨).
 
-저작권 표기·전체 목록은 `NOTICE` 를 보세요.
+제3자 구성요소 전체 표(버전·라이선스·상업 이용)는 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), 저작권 표기는 `NOTICE` 를 보세요.
 
 ## 라이선스
 
-MIT License — Copyright (c) 2026 gggg8657. `LICENSE` 참고.
+MIT License — Copyright (c) 2026 DongJu Kim (gggg8657). `LICENSE` 참고. 제3자 구성요소는 각자의 라이선스를 따릅니다.
+
+## 만든 사람
+
+DongJu Kim (gggg8657) — 설계·구현
