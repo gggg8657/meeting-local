@@ -366,11 +366,11 @@ def hwpx(md_path, out_path, log):
 
 
 # ── 파이프라인 단계 (UI 는 두 단계: transcribe → finalize) ───────────────
-def run_transcribe(src, num_speakers=0, emit=lambda ev: None, run_id=None):
+def run_transcribe(src, num_speakers=0, emit=lambda ev: None, run_id=None, ws=WS):
     if not src.lower().endswith(EXTS):
         raise ValueError(f"지원하지 않는 형식: {os.path.basename(src)} (지원: {', '.join(EXTS)})")
     run_id = run_id or f"{datetime.date.today()}-{secrets.token_hex(2)}"
-    d = os.path.join(WS, run_id); os.makedirs(d, exist_ok=True)
+    d = os.path.join(ws, run_id); os.makedirs(d, exist_ok=True)
     log = []
     emit({"stage": "convert", "msg": "ffmpeg 16kHz 변환"})
     wav = os.path.join(d, "audio.wav")
@@ -388,8 +388,8 @@ def run_transcribe(src, num_speakers=0, emit=lambda ev: None, run_id=None):
     return {**state, "utts": utts, "speakers": spk}
 
 
-def run_finalize(run_id, names, meta, emit=lambda ev: None, llm=ollama):
-    d = os.path.join(WS, run_id)
+def run_finalize(run_id, names, meta, emit=lambda ev: None, llm=ollama, ws=WS):
+    d = os.path.join(ws, run_id)
     utts = rename(jload(os.path.join(d, "transcript.json")), names or {})
     spk = jload(os.path.join(d, "speakers.json"))
     for k, v in (names or {}).items():
@@ -409,8 +409,8 @@ def run_finalize(run_id, names, meta, emit=lambda ev: None, llm=ollama):
     return {**state, "utts": utts, "speakers": spk, "minutes": md, "insights": ins}
 
 
-def load_run(run_id):
-    d = os.path.join(WS, run_id)
+def load_run(run_id, ws=WS):
+    d = os.path.join(ws, run_id)
     st = jload(os.path.join(d, "state.json"))
     utts = rename(jload(os.path.join(d, "transcript.json")), st.get("names") or {})
     r = {**st, "utts": utts, "speakers": jload(os.path.join(d, "speakers.json"))}
@@ -419,12 +419,12 @@ def load_run(run_id):
     return r
 
 
-def list_runs():
+def list_runs(ws=WS):
     out = []
-    if not os.path.isdir(WS):
+    if not os.path.isdir(ws):
         return out
-    for name in sorted(os.listdir(WS), key=lambda n: os.path.getmtime(os.path.join(WS, n)), reverse=True)[:50]:
-        p = os.path.join(WS, name, "state.json")
+    for name in sorted(os.listdir(ws), key=lambda n: os.path.getmtime(os.path.join(ws, n)), reverse=True)[:50]:
+        p = os.path.join(ws, name, "state.json")
         if os.path.exists(p):
             try:
                 j = jload(p); out.append({k: j.get(k) for k in ("run_id", "file", "duration", "n_speakers", "status", "ts")})
@@ -434,6 +434,16 @@ def list_runs():
 
 
 # ── HTTP ───────────────────────────────────────────────────────────────
+def user_ws(h):
+    """포털이 넘긴 사용자별 작업 폴더. owner(서버 주인)·헤더 없음(단독 실행) = 예전 WORKSPACE 그대로"""
+    u = (h.headers.get("X-Agent-User") or "owner").strip()
+    if u == "owner":
+        return WS
+    d = os.path.join(WS, "u", re.sub(r"[^A-Za-z0-9_.-]", "_", u)[:64] or "_")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 HTML = read(os.path.join(ROOT, "ui.html")) if os.path.exists(os.path.join(ROOT, "ui.html")) else "ui.html 없음"
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
@@ -452,10 +462,10 @@ def polish_remote(text, strength="standard"):
         raise RuntimeError(json.loads(e.read() or b"{}").get("error") or f"kordoc HTTP {e.code}")
 
 
-def polish_run(run_id, strength):
+def polish_run(run_id, strength, ws=WS):
     """저장된 회의록(minutes.md)을 윤문해 덮어쓰고(처음 원문은 minutes_orig.md 로 보관) HWPX 를 다시 만든다"""
     if not re.fullmatch(RUN_RE, run_id or ""): raise ValueError("잘못된 실행 ID")
-    d = os.path.join(WS, run_id); md = os.path.join(d, "minutes.md")
+    d = os.path.join(ws, run_id); md = os.path.join(d, "minutes.md")
     if not os.path.exists(md): raise ValueError("회의록이 아직 없습니다")
     r = polish_remote(read(md), strength)
     if not os.path.exists(os.path.join(d, "minutes_orig.md")): write(os.path.join(d, "minutes_orig.md"), read(md))
@@ -516,20 +526,20 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/api/models":
                 return self._send(models())
             if self.path == "/api/runs":
-                return self._send(list_runs())
+                return self._send(list_runs(user_ws(self)))
             m = re.fullmatch(rf"/api/runs/({RUN_RE})", self.path)
             if m:
-                return self._send(load_run(m.group(1)))
+                return self._send(load_run(m.group(1), user_ws(self)))
             m = re.fullmatch(rf"/api/runs/({RUN_RE})/clip\?s=([\d.]+)&e=([\d.]+)", self.path)
             if m:  # 화자 확인용 짧은 클립
-                d = os.path.join(WS, m.group(1)); s, e = float(m.group(2)), min(float(m.group(3)), float(m.group(2)) + 10)
+                d = os.path.join(user_ws(self), m.group(1)); s, e = float(m.group(2)), min(float(m.group(3)), float(m.group(2)) + 10)
                 dst = os.path.join(d, f"clip_{s:.1f}_{e:.1f}.wav")
                 os.path.exists(dst) or clip(os.path.join(d, "audio.wav"), s, e, dst)
                 with open(dst, "rb") as f:
                     return self._send(f.read(), "audio/wav")
             m = re.fullmatch(rf"/api/runs/({RUN_RE})/(minutes\.md|minutes\.hwpx|insights\.json|transcript\.txt|transcript\.json)", self.path)
             if m:
-                with open(os.path.join(WS, m.group(1), m.group(2)), "rb") as f:
+                with open(os.path.join(user_ws(self), m.group(1), m.group(2)), "rb") as f:
                     return self._send(f.read(), "application/octet-stream", name=f"{m.group(1)}_{m.group(2)}")
             self._send(signed(HTML.replace("%MODEL%", json.dumps(MODEL))).encode(), "text/html; charset=utf-8")
         except FileNotFoundError:
@@ -542,7 +552,7 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/api/polish":
             try:
                 req = json.loads(raw or b"{}")
-                return self._send(polish_run(req.get("run_id"), req.get("strength") or "standard"))
+                return self._send(polish_run(req.get("run_id"), req.get("strength") or "standard", user_ws(self)))
             except ValueError as e:
                 return self._send({"error": str(e)}, code=400)
             except Exception as e:
@@ -558,7 +568,7 @@ class H(BaseHTTPRequestHandler):
                     audio = base64.b64decode(json.loads(raw)["file"])
                 if not audio:
                     raise ValueError("file 없음")
-                d = os.path.join(WS, "_stt"); os.makedirs(d, exist_ok=True)
+                d = os.path.join(user_ws(self), "_stt"); os.makedirs(d, exist_ok=True)
                 src = os.path.join(d, secrets.token_hex(4)); wav = src + ".wav"
                 with open(src, "wb") as f:
                     f.write(audio)
@@ -574,13 +584,13 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/api/run":
                 name = re.sub(r"[^\w.\-가-힣 ]", "_", os.path.basename(req.get("file_name") or "upload.bin"))
                 run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"
-                d = os.path.join(WS, run_id); os.makedirs(d)
+                ws = user_ws(self); d = os.path.join(ws, run_id); os.makedirs(d)
                 src = os.path.join(d, "00_" + name)
                 with open(src, "wb") as f:
                     f.write(base64.b64decode(req["file_b64"]))
                 emit = self._sse()
                 try:
-                    emit({"done": run_transcribe(src, int(req.get("speakers") or 0), emit, run_id)})
+                    emit({"done": run_transcribe(src, int(req.get("speakers") or 0), emit, run_id, ws)})
                 except Exception as e:
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
@@ -588,7 +598,7 @@ class H(BaseHTTPRequestHandler):
             if m:
                 emit = self._sse()
                 try:
-                    emit({"done": run_finalize(m.group(1), req.get("names") or {}, req.get("meta") or {}, emit)})
+                    emit({"done": run_finalize(m.group(1), req.get("names") or {}, req.get("meta") or {}, emit, ws=user_ws(self))})
                 except Exception as e:
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
@@ -613,4 +623,4 @@ if __name__ == "__main__":
         print(f"\n[run] _workspace/{r['run_id']}  hwpx={r['hwpx']}", file=sys.stderr)
         sys.exit(0)
     print(f"meeting local → http://localhost:{PORT}  (llm={LLM_API} {LLM_BASE} {MODEL}, whisper={WHISPER_MODEL})  {_SIG}")
-    ThreadingHTTPServer(("", PORT), H).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", ""), PORT), H).serve_forever()
