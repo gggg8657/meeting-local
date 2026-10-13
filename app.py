@@ -466,7 +466,7 @@ def polish_remote(text, strength="standard"):
 
 def polish_run(run_id, strength, ws=WS):
     """저장된 회의록(minutes.md)을 윤문해 덮어쓰고(처음 원문은 minutes_orig.md 로 보관) HWPX 를 다시 만든다"""
-    if not re.fullmatch(RUN_RE, run_id or ""): raise ValueError("잘못된 실행 ID")
+    if not isinstance(run_id, str) or not re.fullmatch(RUN_RE, run_id): raise ValueError("잘못된 실행 ID")
     d = os.path.join(ws, run_id); md = os.path.join(d, "minutes.md")
     if not os.path.exists(md): raise ValueError("회의록이 아직 없습니다")
     r = polish_remote(read(md), strength)
@@ -501,6 +501,28 @@ def signed(html):
                f'opacity:.55;margin:28px 0 8px">{name} · 내부 시험용 · 배포용 아님</div>')
         html = html.replace("</body>", tag + "</body>", 1) if "</body>" in html else html + tag
     return html
+
+
+class BadReq(ValueError):
+    """잘못된 요청 본문 → 400"""
+
+
+def body_obj(raw):
+    """요청 본문을 JSON 객체(dict)로 — 비었으면 {}, 깨졌거나 객체가 아니면 BadReq"""
+    try:
+        o = json.loads(raw or b"{}")
+    except ValueError:
+        raise BadReq("요청 본문이 올바른 JSON 이 아닙니다")
+    if not isinstance(o, dict):
+        raise BadReq("요청 본문은 JSON 객체여야 합니다")
+    return o
+
+
+def b64(v):
+    try:
+        return base64.b64decode(v or b"")
+    except (ValueError, TypeError):
+        raise BadReq("파일(base64)이 올바르지 않습니다")
 
 
 class H(BaseHTTPRequestHandler):
@@ -562,7 +584,7 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(n)
         if self.path == "/api/polish":
             try:
-                req = json.loads(raw or b"{}")
+                req = body_obj(raw)
                 return self._send(polish_run(req.get("run_id"), req.get("strength") or "standard", user_ws(self)))
             except ValueError as e:
                 return self._send({"error": str(e)}, code=400)
@@ -576,9 +598,9 @@ class H(BaseHTTPRequestHandler):
                     msg = email.parser.BytesParser().parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
                     audio = next((part.get_payload(decode=True) for part in msg.walk() if part.get_param("name", header="content-disposition") == "file"), None)
                 else:
-                    audio = base64.b64decode(json.loads(raw)["file"])
+                    audio = b64(body_obj(raw).get("file"))
                 if not audio:
-                    raise ValueError("file 없음")
+                    raise BadReq("file 없음")
                 d = os.path.join(user_ws(self), "_stt"); os.makedirs(d, exist_ok=True)
                 src = os.path.join(d, secrets.token_hex(4)); wav = src + ".wav"
                 with open(src, "wb") as f:
@@ -588,32 +610,48 @@ class H(BaseHTTPRequestHandler):
                 for f in (src, wav):
                     os.remove(f)
                 return self._send({"text": text})
+            except BadReq as e:
+                return self._send({"error": str(e)}, code=400)
             except Exception as e:
                 return self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
-        req = json.loads(raw)
         try:
+            req = body_obj(raw)
             if self.path == "/api/run":
-                name = re.sub(r"[^\w.\-가-힣 ]", "_", os.path.basename(req.get("file_name") or "upload.bin"))
+                name = re.sub(r"[^\w.\-가-힣 ]", "_", os.path.basename(str(req.get("file_name") or "upload.bin")))
+                audio = b64(req.get("file_b64"))
+                if not audio:
+                    raise BadReq("file_b64 없음")
+                try:
+                    speakers = int(req.get("speakers") or 0)
+                except (ValueError, TypeError):
+                    raise BadReq("speakers 는 숫자여야 합니다")
                 run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"
                 ws = user_ws(self); d = os.path.join(ws, run_id); os.makedirs(d)
                 src = os.path.join(d, "00_" + name)
                 with open(src, "wb") as f:
-                    f.write(base64.b64decode(req["file_b64"]))
+                    f.write(audio)
                 emit = self._sse()
                 try:
-                    emit({"done": run_transcribe(src, int(req.get("speakers") or 0), emit, run_id, ws)})
+                    emit({"done": run_transcribe(src, speakers, emit, run_id, ws)})
                 except Exception as e:
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
             m = re.fullmatch(rf"/api/finalize/({RUN_RE})", self.path)
             if m:
+                names, meta = req.get("names") or {}, req.get("meta") or {}
+                if not isinstance(names, dict) or not isinstance(meta, dict):
+                    raise BadReq("names·meta 는 JSON 객체여야 합니다")
+                if not os.path.exists(os.path.join(user_ws(self), m.group(1), "transcript.json")):
+                    return self._send({"error": "없는 실행입니다(먼저 전사하세요)"}, code=404)
                 emit = self._sse()
                 try:
-                    emit({"done": run_finalize(m.group(1), req.get("names") or {}, req.get("meta") or {}, emit, ws=user_ws(self))})
+                    emit({"done": run_finalize(m.group(1), names, meta, emit, ws=user_ws(self))})
                 except Exception as e:
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
             self._send({"error": "unknown"}, code=404)
+        except BadReq as e:
+            self._send({"error": str(e)}, code=400)
         except Exception as e:
             self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
 
