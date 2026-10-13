@@ -1,6 +1,6 @@
 # 제3자 구성요소 고지 (THIRD_PARTY_NOTICES)
 
-meeting-local 의 원저작물은 DongJu Kim(gggg8657)이 작성했습니다(`NOTICE`, `LICENSE`). 아래 제3자 구성요소는 각자의 라이선스를 따르며, 이 저장소의 MIT 라이선스로 바뀌지 않습니다.
+meeting-local 의 원저작물은 DongJu Kim(gggg8657)이 작성했습니다(`NOTICE`, `LICENSE`). 아래 제3자 구성요소는 각자의 라이선스를 따르며, 이 저장소의 라이선스(PolyForm Noncommercial 1.0.0)로 바뀌지 않습니다.
 조사일: 2026-10-12 (실제 파일·`venv` 설치 메타데이터·setup.sh·pack.sh 기준). "상업 이용" 칸은 확인한 라이선스 문구를 요약한 것이며 법률 판단이 아닙니다.
 
 이 저장소에는 제3자 코드·가중치가 **들어 있지 않습니다**(`models/`, `venv/` 는 `.gitignore`). 아래는 `setup.sh` 가 설치하거나 내려받는 것입니다. `pack.sh` 로 만든 폐쇄망 번들은 휠과 가중치를 함께 묶으므로(재배포) 번들을 외부에 넘길 때는 아래 라이선스를 같이 전달하세요.
