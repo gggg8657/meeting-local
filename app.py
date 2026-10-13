@@ -35,6 +35,8 @@ MODEL = os.environ.get("LLM_MODEL", "qwen3:8b")
 LLM_KEY = os.environ.get("LLM_API_KEY", "")
 NUM_CTX = int(os.environ.get("NUM_CTX", "16384"))
 PORT = int(os.environ.get("PORT", "8767"))
+MAX_AUDIO = int(os.environ.get("MAX_AUDIO_MB", "500")) * 2**20  # 올리는 회의 음성 하나 상한(약 2~3시간 녹음)
+MAX_BODY = MAX_AUDIO * 4 // 3 + 2**20  # 요청 본문 상한(base64 로 실은 크기)
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "auto")     # auto|cpu|cuda
 WHISPER_COMPUTE = os.environ.get("WHISPER_COMPUTE", "")       # 비우면 cuda→float16, cpu→int8
@@ -548,7 +550,16 @@ class H(BaseHTTPRequestHandler):
             self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
 
     def do_POST(self):
-        raw = self.rfile.read(int(self.headers["Content-Length"]))
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._send({"error": "잘못된 요청"}, code=400)
+        if n > MAX_BODY:
+            self.close_connection = True
+            while n > 0 and self.rfile.read(min(n, 1 << 20)):  # 본문을 버려 읽어야 포털(프록시)이 502 대신 413 을 받는다
+                n -= 1 << 20
+            return self._send({"error": f"파일이 너무 큽니다 (음성 {MAX_AUDIO // 2**20}MB 이하)"}, code=413)
+        raw = self.rfile.read(n)
         if self.path == "/api/polish":
             try:
                 req = json.loads(raw or b"{}")
