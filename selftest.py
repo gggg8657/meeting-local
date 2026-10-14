@@ -2,6 +2,7 @@
 """LLM·ASR·화자분리 없이 결정적 부분만 검증: 병합 → 화자 요약 → 이름 치환 → 주제 분할(폴백) → 인사이트/회의록 조립.
 무거운 모델은 가짜로 바꿔 끼운다.   python3 selftest.py"""
 import os, shutil, subprocess, app
+for _k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): os.environ.pop(_k, None)   # setup.sh 가 포털 환경에서 돌려도 시험 작업을 진짜 🔔 로 보내지 않게
 
 SEGS = [  # ASR 가짜 출력 (단어 타임스탬프 포함)
     {"start": 0.0, "end": 4.0, "text": "안녕하세요 오늘 회의 시작합니다", "words": [{"s": 0.0, "e": 1.0, "w": "안녕하세요"}, {"s": 1.0, "e": 2.0, "w": " 오늘"}, {"s": 2.0, "e": 3.0, "w": " 회의"}, {"s": 3.0, "e": 4.0, "w": " 시작합니다"}]},
