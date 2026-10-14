@@ -23,6 +23,7 @@ import sys
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import portal_auth  # 포털 서명 확인 관문·오류 문장 정리(원본 agent-page-portal/sdk/portal_auth.py)
 
 import portal_jobs
 from gpu_pick import Lazy, label, pick, release, torch_device
@@ -462,7 +463,7 @@ KORDOC_URL = os.environ.get("KORDOC_URL", "http://localhost:8766").rstrip("/")
 
 def polish_remote(text, strength="standard"):
     req = urllib.request.Request(KORDOC_URL + "/api/polish_text", json.dumps({"text": text, "strength": strength}).encode(),
-                                 {"Content-Type": "application/json"})
+                                 {"Content-Type": "application/json", **portal_auth.sign("_service")})   # 도구 간 호출도 포털 서명(portal_auth)
     try:
         with urllib.request.urlopen(req, timeout=1800) as r:
             return json.load(r)
@@ -486,7 +487,7 @@ def polish_run(run_id, strength, ws=WS):
 
 def polish_ok():
     try:
-        urllib.request.urlopen(KORDOC_URL + "/api/models", timeout=2)
+        urllib.request.urlopen(KORDOC_URL + "/healthz", timeout=2)   # 켜짐 확인은 표준 헬스로(LLM 을 부르지 않음, 서명 불필요)
         return True
     except Exception:
         return False
@@ -571,11 +572,13 @@ class H(BaseHTTPRequestHandler):
             if m:
                 with open(os.path.join(user_ws(self), m.group(1), m.group(2)), "rb") as f:
                     return self._send(f.read(), "application/octet-stream", name=f"{m.group(1)}_{m.group(2)}")
+            if self.path.split("?")[0].startswith("/api/"):   # 없는 API 경로는 화면 대신 JSON 404
+                return self._send({"error": "not found"}, code=404)
             self._send(signed(HTML.replace("%MODEL%", json.dumps(MODEL))).encode(), "text/html; charset=utf-8")
         except FileNotFoundError:
             self._send({"error": "없음"}, code=404)
         except Exception as e:
-            self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
+            self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=500)
 
     def do_POST(self):
         try:
@@ -602,7 +605,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send({"error": str(e)}, code=400)
             except Exception as e:
                 jid and job(self, "failed", jid, "회의록 윤문 — " + rid, type(e).__name__)
-                return self._send({"error": f"{type(e).__name__}: {e}"}, code=502)
+                return self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=502)
         if self.path.split("?")[0] == "/v1/audio/transcriptions":  # OpenAI 호환 STT: multipart file 또는 JSON {"file": base64}
             try:
                 ctype = self.headers.get("Content-Type", "")
@@ -626,7 +629,7 @@ class H(BaseHTTPRequestHandler):
             except BadReq as e:
                 return self._send({"error": str(e)}, code=400)
             except Exception as e:
-                return self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
+                return self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=500)
         try:
             req = body_obj(raw)
             if self.path == "/api/run":
@@ -651,7 +654,7 @@ class H(BaseHTTPRequestHandler):
                     emit({"done": st})
                 except Exception as e:
                     job(self, "failed", run_id, title, type(e).__name__)
-                    emit({"error": f"{type(e).__name__}: {e}"})
+                    emit({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")})
                 return
             m = re.fullmatch(rf"/api/finalize/({RUN_RE})", self.path)
             if m:
@@ -668,13 +671,13 @@ class H(BaseHTTPRequestHandler):
                     emit({"done": fin})
                 except Exception as e:
                     job(self, "failed", jid, title, type(e).__name__)
-                    emit({"error": f"{type(e).__name__}: {e}"})
+                    emit({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")})
                 return
             self._send({"error": "unknown"}, code=404)
         except BadReq as e:
             self._send({"error": str(e)}, code=400)
         except Exception as e:
-            self._send({"error": f"{type(e).__name__}: {e}"}, code=500)
+            self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=500)
 
 
 if __name__ == "__main__":
@@ -693,4 +696,4 @@ if __name__ == "__main__":
         print(f"\n[run] _workspace/{r['run_id']}  hwpx={r['hwpx']}", file=sys.stderr)
         sys.exit(0)
     print(f"meeting local → http://localhost:{PORT}  (llm={LLM_API} {LLM_BASE} {MODEL}, whisper={WHISPER_MODEL})  {_SIG}")
-    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), __import__("portal_auth").install(H, "meeting-local")).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), portal_auth.install(H, "meeting-local")).serve_forever()
