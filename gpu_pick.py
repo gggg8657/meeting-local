@@ -10,7 +10,13 @@
 min_free_mb 만큼 '예약'을 남기고(모든 도구가 같이 보는 파일, flock), 다른 pick 은 그만큼 덜 비었다고 본다. 예약 중 실제로
 잡혀서 nvidia-smi 에 보이는 만큼은 빼고 센다(이중으로 안 셈).
 
+후보: nvidia-smi 물리 번호 중 CUDA_VISIBLE_DEVICES ∩ GPU_POOL 에 들고 GPU_RESERVED 에 없는 것만. 번호는 모두 물리 번호
+(CUDA_DEVICE_ORDER=PCI_BUS_ID 라 nvidia-smi 번호와 같음). 이 프로세스 안의 'cuda:N' 은 torch_device 가 보이는 순번으로 바꾼다.
+서브프로세스(작업자 등)는 pool_env(env) 로 띄우면 CUDA_VISIBLE_DEVICES 가 이 후보로 좁혀져 — 셸에서 물려받은 엉뚱한 값
+(예: ~/.zshrc 의 2,3)으로 떠도 예약 GPU 는 못 본다.
+
 env: GPU_POOL(쓸 GPU 번호 목록, 비우면 CUDA_VISIBLE_DEVICES, 그것도 비우면 전부)  GPU_IDLE_UNLOAD_S(600, 0 이면 안 내림)
+     GPU_RESERVED(절대 안 쓸 물리 번호 — 운영 vLLM 전용 등. 없으면 VLLM_GPUS, 그것도 없으면 ~/.local/vllm 이 있을 때 3, 'none' 이면 없음)
      GPU_PICK_HOLD_S(예약 유지 초, 600)  GPU_PICK_DIR(예약 파일 자리, 기본 /tmp/gpu_pick-<uid>)"""
 import fcntl, gc, json, os, subprocess, sys, tempfile, threading, time, uuid
 from contextlib import contextmanager
@@ -25,14 +31,49 @@ def _ids(s):
     return [x.strip() for x in (s or "").split(",") if x.strip()]
 
 
-def gpus():
-    """nvidia-smi 로 [{"index", "free"(MiB), "util"(%)}] — 쓸 수 있는(pool·visible) GPU 만. nvidia-smi 없으면 []"""
+def reserved(env=None):
+    """절대 고르지 않을 물리 GPU 번호 (운영 vLLM 전용 등)"""
+    env = os.environ if env is None else env
+    v = env.get("GPU_RESERVED")
+    if v is None:
+        v = env.get("VLLM_GPUS")
+    if v is None:
+        v = "3" if os.path.isdir(os.path.expanduser("~/.local/vllm")) else ""  # 이 서버: vLLM(vllm-switch 기본 VLLM_GPUS=3)
+    return [] if v.strip().lower() in ("", "none", "-") else _ids(v)
+
+
+def allowed(ids, env=None):
+    """물리 번호 목록 ids 중 이 프로세스가 써도 되는 것 — CUDA_VISIBLE_DEVICES ∩ GPU_POOL − GPU_RESERVED"""
+    env = os.environ if env is None else env
+    vis, pool, res = _ids(env.get("CUDA_VISIBLE_DEVICES")), _ids(env.get("GPU_POOL")), reserved(env)
+    if env.get("CUDA_VISIBLE_DEVICES") is not None and not vis:
+        return []  # CUDA_VISIBLE_DEVICES="" = GPU 를 하나도 안 보이게
+    return [i for i in ids if (not vis or i in vis) and (not pool or i in pool) and i not in res]
+
+
+def _smi():
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.free,utilization.gpu", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=10).stdout
+        return subprocess.run(["nvidia-smi", "--query-gpu=index,memory.free,utilization.gpu", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=10).stdout
     except Exception:
-        return []
-    vis, pool = _ids(os.environ.get("CUDA_VISIBLE_DEVICES")), _ids(os.environ.get("GPU_POOL"))
+        return ""
+
+
+def pool_env(env, smi_ids=None):
+    """서브프로세스용 환경: CUDA_VISIBLE_DEVICES 를 쓸 수 있는 후보(물리 번호)로 좁힌다. 후보가 없으면 "" (GPU 안 보임).
+    smi_ids: nvidia-smi 물리 번호 목록(시험용, 없으면 nvidia-smi 로)"""
+    env = dict(env)
+    if smi_ids is None:
+        smi_ids = [l.split(",")[0].strip() for l in _smi().strip().splitlines() if l.strip()]
+    vis, pool = _ids(env.get("CUDA_VISIBLE_DEVICES")), _ids(env.get("GPU_POOL"))
+    base = smi_ids or vis or pool  # nvidia-smi 가 없으면 적힌 후보로 계산
+    env.update(CUDA_VISIBLE_DEVICES=",".join(allowed(base, env)), CUDA_DEVICE_ORDER="PCI_BUS_ID")
+    return env
+
+
+def gpus():
+    """nvidia-smi 로 [{"index", "free"(MiB), "util"(%)}] — 쓸 수 있는(visible ∩ pool − reserved) GPU 만. nvidia-smi 없으면 []"""
+    out = _smi()
     rows = []
     for line in out.strip().splitlines():
         try:
@@ -40,9 +81,9 @@ def gpus():
             g = {"index": i, "free": int(float(free)), "util": int(float(util)) if util.replace(".", "").isdigit() else 0}
         except ValueError:
             continue
-        if (not vis or i in vis) and (not pool or i in pool):
-            rows.append(g)
-    return rows
+        rows.append(g)
+    ok = set(allowed([g["index"] for g in rows]))
+    return [g for g in rows if g["index"] in ok]
 
 
 @contextmanager
@@ -101,14 +142,17 @@ def torch_device(g):
     if not g:
         return "cpu"
     vis = _ids(os.environ.get("CUDA_VISIBLE_DEVICES"))
+    if vis and g["index"] not in vis:
+        raise ValueError(f"GPU {g['index']} 는 CUDA_VISIBLE_DEVICES={','.join(vis)} 밖")
     return f"cuda:{vis.index(g['index']) if vis else int(g['index'])}"
 
 
 def env_for(g, env):
-    """서브프로세스용 환경: 그 GPU 1장만 보이게"""
+    """서브프로세스용 환경: 그 GPU 1장만 보이게 (못 고르면 후보 안으로만 좁힘 — 예약 GPU 는 안 보이게)"""
     env = dict(env)
-    if g:
-        env.update(CUDA_VISIBLE_DEVICES=g["index"], CUDA_DEVICE_ORDER="PCI_BUS_ID")
+    if not g:
+        return pool_env(env)
+    env.update(CUDA_VISIBLE_DEVICES=g["index"], CUDA_DEVICE_ORDER="PCI_BUS_ID")
     return env
 
 
