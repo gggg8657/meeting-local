@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import portal_jobs
 from gpu_pick import Lazy, label, pick, release, torch_device
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -446,6 +447,11 @@ def user_ws(h):
     return d
 
 
+def job(h, status, jid, title, message=""):
+    """포털 작업 알림(🔔) — 포털 밖에서 띄웠으면 아무 일도 안 함. link 는 이 도구 화면에서 그 실행을 여는 주소"""
+    portal_jobs.notify((h.headers.get("X-Agent-User") or "owner").strip() or "owner", status, id=jid, title=title, link="/?run=" + jid[:15], message=message)
+
+
 HTML = read(os.path.join(ROOT, "ui.html")) if os.path.exists(os.path.join(ROOT, "ui.html")) else "ui.html 없음"
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
@@ -583,12 +589,19 @@ class H(BaseHTTPRequestHandler):
             return self._send({"error": f"파일이 너무 큽니다 (음성 {MAX_AUDIO // 2**20}MB 이하)"}, code=413)
         raw = self.rfile.read(n)
         if self.path == "/api/polish":
+            jid = None
             try:
-                req = body_obj(raw)
-                return self._send(polish_run(req.get("run_id"), req.get("strength") or "standard", user_ws(self)))
+                req = body_obj(raw); rid = req.get("run_id")
+                if isinstance(rid, str) and re.fullmatch(RUN_RE, rid):
+                    jid = rid + "-pol"; job(self, "running", jid, "회의록 윤문 — " + rid)
+                r = polish_run(rid, req.get("strength") or "standard", user_ws(self))
+                jid and job(self, "done", jid, "회의록 윤문 — " + rid, "윤문 완료")
+                return self._send(r)
             except ValueError as e:
+                jid and job(self, "failed", jid, "회의록 윤문 — " + rid, str(e)[:100])
                 return self._send({"error": str(e)}, code=400)
             except Exception as e:
+                jid and job(self, "failed", jid, "회의록 윤문 — " + rid, type(e).__name__)
                 return self._send({"error": f"{type(e).__name__}: {e}"}, code=502)
         if self.path.split("?")[0] == "/v1/audio/transcriptions":  # OpenAI 호환 STT: multipart file 또는 JSON {"file": base64}
             try:
@@ -630,10 +643,14 @@ class H(BaseHTTPRequestHandler):
                 src = os.path.join(d, "00_" + name)
                 with open(src, "wb") as f:
                     f.write(audio)
-                emit = self._sse()
+                emit = self._sse(); title = "회의 전사 — " + name[:60]
+                job(self, "running", run_id, title)
                 try:
-                    emit({"done": run_transcribe(src, speakers, emit, run_id, ws)})
+                    st = run_transcribe(src, speakers, emit, run_id, ws)
+                    job(self, "done", run_id, title, f"화자 {st.get('n_speakers')}명 · 이름 지정 후 회의록 작성")
+                    emit({"done": st})
                 except Exception as e:
+                    job(self, "failed", run_id, title, type(e).__name__)
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
             m = re.fullmatch(rf"/api/finalize/({RUN_RE})", self.path)
@@ -643,10 +660,14 @@ class H(BaseHTTPRequestHandler):
                     raise BadReq("names·meta 는 JSON 객체여야 합니다")
                 if not os.path.exists(os.path.join(user_ws(self), m.group(1), "transcript.json")):
                     return self._send({"error": "없는 실행입니다(먼저 전사하세요)"}, code=404)
-                emit = self._sse()
+                emit = self._sse(); jid = m.group(1) + "-min"; title = "회의록 작성 — " + (str(meta.get("title") or "") or m.group(1))[:60]
+                job(self, "running", jid, title)
                 try:
-                    emit({"done": run_finalize(m.group(1), names, meta, emit, ws=user_ws(self))})
+                    fin = run_finalize(m.group(1), names, meta, emit, ws=user_ws(self))
+                    job(self, "done", jid, title, f"인사이트 {len(fin.get('insights') or [])}개" + (" · HWPX" if fin.get("hwpx") else ""))
+                    emit({"done": fin})
                 except Exception as e:
+                    job(self, "failed", jid, title, type(e).__name__)
                     emit({"error": f"{type(e).__name__}: {e}"})
                 return
             self._send({"error": "unknown"}, code=404)

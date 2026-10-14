@@ -89,3 +89,30 @@ try:
 finally:
     _sh.rmtree(_gp.RES_DIR, ignore_errors=True); _gp._smi, _gp.RES_DIR = _smi0, _dir0; _os.environ.clear(); _os.environ.update(_env0)
 print("selftest GPU 후보 OK — 0,1,2 에서 3 안 고름")
+
+# 포털 작업 알림(portal_jobs): 환경변수 없으면 False(아무 일 없음), 있으면 가짜 포털로 POST + 토큰 헤더
+import json as _json, os as _os, threading as _th, portal_jobs as _pj
+from http.server import BaseHTTPRequestHandler as _BH, HTTPServer as _HS
+_env0 = dict(_os.environ)
+try:
+    for _k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): _os.environ.pop(_k, None)
+    assert _pj.notify("alice", "running", id="j1", title="t") is False and _pj.enabled() is False
+    _got = []
+    class _P(_BH):
+        def log_message(self, *a): pass
+        def do_POST(self):
+            _got.append((self.headers.get("X-Portal-Jobs-Token"), _json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
+    _srv = _HS(("127.0.0.1", 0), _P); _th.Thread(target=_srv.serve_forever, daemon=True).start()
+    _os.environ.update(PORTAL_JOBS_URL=f"http://127.0.0.1:{_srv.server_address[1]}/api/internal/jobs", PORTAL_JOBS_TOKEN="tok-test", PORTAL_JOBS_TOOL="meeting-local")
+    _os.environ.pop("http_proxy", None); _os.environ.pop("HTTP_PROXY", None)
+    app.job(type("_H", (), {"headers": {"X-Agent-User": "alice"}})(), "done", "2026-10-14-abcd-min", "회의록 작성", "인사이트 2개")
+    assert _pj.flush() and len(_got) == 1, _got
+    _tok, _p = _got[0]
+    assert _tok == "tok-test" and _p["tool"] == "meeting-local" and _p["user"] == "alice" and _p["status"] == "done", _p
+    assert _p["id"] == "2026-10-14-abcd-min" and _p["link"] == "/?run=2026-10-14-abcd" and _p["message"] == "인사이트 2개", _p
+    assert _pj.notify("alice", "bogus", id="x") is False
+    _srv.shutdown()
+finally:
+    _os.environ.clear(); _os.environ.update(_env0)
+print("selftest 포털 작업 알림 OK")

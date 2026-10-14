@@ -127,12 +127,14 @@ function showFinal(j) {
 async function loadRuns() {
   const rs = await fetch('api/runs').then(r => r.json());
   $('runs').innerHTML = rs.map(r => `<li data-id="${r.run_id}">${r.ts} · ${r.file} · ${r.duration}s · 화자 ${r.n_speakers} · ${r.status}</li>`).join('') || '<li>없음</li>';
-  $('runs').querySelectorAll('li[data-id]').forEach(li => li.onclick = async () => {
-    const j = await fetch('api/runs/' + li.dataset.id).then(r => r.json()); $('stages').textContent = '';
-    showSpeakers(j); if (j.minutes) showFinal(j);
-  });
+  $('runs').querySelectorAll('li[data-id]').forEach(li => li.onclick = () => openRun(li.dataset.id));
+}
+async function openRun(id) {
+  const j = await fetch('api/runs/' + id).then(r => r.json()); if (j.error) return; $('stages').textContent = '';
+  showSpeakers(j); if (j.minutes) showFinal(j);
 }
 loadRuns();
+{ const q = new URLSearchParams(location.search).get('run'); if (q && /^\d{4}-\d{2}-\d{2}-[0-9a-f]{4}$/.test(q)) openRun(q); }  // 포털 작업 알림(🔔)에서 연 실행
 const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = no; r.readAsDataURL(f); });
 
 $('go').onclick = async () => {
