@@ -693,4 +693,4 @@ if __name__ == "__main__":
         print(f"\n[run] _workspace/{r['run_id']}  hwpx={r['hwpx']}", file=sys.stderr)
         sys.exit(0)
     print(f"meeting local → http://localhost:{PORT}  (llm={LLM_API} {LLM_BASE} {MODEL}, whisper={WHISPER_MODEL})  {_SIG}")
-    ThreadingHTTPServer((os.environ.get("BIND", ""), PORT), H).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), __import__("portal_auth").install(H, "meeting-local")).serve_forever()
