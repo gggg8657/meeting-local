@@ -57,6 +57,60 @@ again = app.load_run(st["run_id"])
 assert again["minutes"] == fin["minutes"] and again["utts"][1]["speaker"] == "박연구원"
 assert app.ts(125) == "02:05" and "[00:00] 김부장:" in app.transcript_text(r)
 shutil.rmtree(os.path.join(app.WS, st["run_id"])); os.remove(src)
+# 5) 브라우저가 떠나도(첫 이벤트 뒤 쓰기가 BrokenPipeError) 전사·회의록 작성은 끝까지 — 실행 목록에 남고 🔔 done, 서버 오류·트레이스백 없음
+import base64, json, portal_jobs
+from http.server import BaseHTTPRequestHandler
+import io, sys, tempfile, threading, urllib.request
+from http.server import ThreadingHTTPServer
+class Cut:
+    def __init__(s, f, n): s.f, s.n = f, n
+    def write(s, b):
+        s.n -= 1
+        if s.n < 0: raise BrokenPipeError(32, "Broken pipe")
+        return s.f.write(b)
+    def flush(s): pass
+    def __getattr__(s, k): return getattr(s.f, k)
+class CutH(app.H):
+    def setup(s): super().setup(); s.wfile = Cut(s.wfile, 2)  # 응답 머리 + 첫 이벤트까지만 닿음
+ERRS = []
+class Srv(ThreadingHTTPServer):
+    def handle_error(s, req, addr): ERRS.append(sys.exc_info()[1])
+def cut_post(path, body, user="alice"):
+    srv = Srv(("127.0.0.1", 0), CutH); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    err0, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        r = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}{path}", json.dumps(body).encode(), {"Content-Type": "application/json", "X-Agent-User": user})
+        got = urllib.request.urlopen(r).read().decode()
+    finally:
+        cap, sys.stderr = sys.stderr.getvalue(), err0
+    srv.shutdown(); srv.server_close()
+    assert got.count("data: ") == 1 and not ERRS and "Traceback" not in cap and cap.count("연결 끊김") == 1, (got, ERRS, cap)
+    return got
+GOT = []
+class FakePortal(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        GOT.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
+fp = ThreadingHTTPServer(("127.0.0.1", 0), FakePortal); threading.Thread(target=fp.serve_forever, daemon=True).start()
+_ws, _fin, _env = app.WS, app.run_finalize, dict(os.environ)
+os.environ.update(PORTAL_JOBS_URL=f"http://127.0.0.1:{fp.server_address[1]}/api/internal/jobs", PORTAL_JOBS_TOKEN="tok-test", PORTAL_JOBS_TOOL="meeting-local")
+for _k in ("http_proxy", "HTTP_PROXY"): os.environ.pop(_k, None)
+app.WS = tempfile.mkdtemp(prefix="meeting-cut-")
+app.run_finalize = lambda *a, **k: _fin(*a, llm=fake, **k)  # 진짜 LLM 대신 가짜
+try:
+    cut_post("/api/run", {"file_name": "떠난회의.wav", "file_b64": base64.b64encode(b"RIFF").decode()})
+    rid = next(x for x in os.listdir(os.path.join(app.WS, "u", "alice")) if x[:4].isdigit())
+    assert app.load_run(rid, os.path.join(app.WS, "u", "alice"))["status"] == "transcribed"
+    cut_post(f"/api/finalize/{rid}", {"names": {"화자2": "박연구원"}, "meta": {"title": "떠난 회의"}})
+    fin2 = app.load_run(rid, os.path.join(app.WS, "u", "alice"))
+    assert fin2["status"] == "done" and fin2["minutes"].startswith("# "), fin2.get("status")
+    portal_jobs.flush()
+    assert [(g["id"], g["status"]) for g in GOT] == [(rid, "running"), (rid, "done"), (rid + "-min", "running"), (rid + "-min", "done")], GOT
+finally:
+    fp.shutdown(); shutil.rmtree(app.WS, ignore_errors=True); app.WS, app.run_finalize = _ws, _fin
+    os.environ.clear(); os.environ.update(_env)
+
 # 저작권 표기: 서버가 화면에 붙이는 코드가 있어야 한다 (LICENSE·NOTICE)
 _src = open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "app.py"), encoding="utf-8").read()
 assert "wqkgMjAyNiBnZ2dnODY1NyDCtyBkb25nanVraW0uZGV2QGdtYWlsLmNvbQ==" in _src and "signed(" in _src and "X-Author" in _src, "저작권 표기 누락"
